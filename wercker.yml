@@ -1,0 +1,101 @@
+box:
+  id: node
+  tag: 8.10.0
+  ports:
+    - '80'
+    - '3000'
+    - '3001'
+
+services:
+  - id: mongo
+    tag: 3.4.4
+    ports:
+     - '27017'
+
+dev:
+  steps:
+    - script:
+        name: check local environment
+        code: |
+          [[ -f ENVIRONMENT_LOCAL || "$(cat ENVIRONMENT_LOCAL.template | xargs)" == "" ]] || ( echo "No ENVIRONMENT_LOCAL present, please create one based on ENVIRONMENT_LOCAL.template" && exit 1 )
+        cwd: $WERCKER_ROOT
+    - script:
+      name: install dependencies
+      code: HOME=$YARN_CACHE yarn
+      cwd: $WERCKER_ROOT/app
+    # - npm-install:
+    #     name: install node dependencies
+    #     options: --no-optional --silent
+    #     cwd: $WERCKER_ROOT/src
+    - script:
+        name: adding tools
+        code: |
+          ln -s "$WERCKER_ROOT/tools/log" /usr/bin/log
+          ln -s "$WERCKER_ROOT/tools/reload" /usr/bin/reload
+          ln -s "$WERCKER_ROOT/tools/reload" /usr/bin/restart
+          ln -s "$WERCKER_ROOT/tools/snapshot" /usr/bin/snapshot
+          ln -s "$WERCKER_ROOT/tools/snapshot-restore" /usr/bin/restore
+    - script:
+      name: export vars
+      code: export DB_URL="mongodb://$MONGO_PORT_27017_TCP_ADDR:$MONGO_PORT_27017_TCP_PORT/shop"
+    - script:
+        name: run
+        code: |
+          touch /var/log/cezerin.log
+          # touch /var/log/webpack.log
+          # npm run dev >> /var/log/webpack.log 2>&1 &
+          # npm run setup
+          npm install theme --save
+          npm run build
+          npm run start >> /var/log/cezerin.log 2>&1 &
+        cwd: $WERCKER_ROOT/app
+    - internal/shell:
+        code: |
+          stty columns $TERMINAL_COLUMNS
+          stty rows $TERMINAL_ROWS
+          log
+
+build:
+  steps:
+    - npm-install:
+        name: install node dependencies
+        options: --no-optional --silent
+        cwd: $WERCKER_ROOT/src
+    - npm-test:
+        name: run tests
+        cwd: $WERCKER_ROOT/src
+    - script:
+        name: run webpack
+        code: NODE_ENV=production npm run webpack
+        cwd: $WERCKER_ROOT/src
+    - script:
+        name: export the application
+        code: |
+          cp -r src "$WERCKER_OUTPUT_DIR"
+          cp -r dokku "$WERCKER_OUTPUT_DIR"
+          cp -r aws "$WERCKER_OUTPUT_DIR"
+          mv "$WERCKER_OUTPUT_DIR/dokku/Dockerfile" "$WERCKER_OUTPUT_DIR/Dockerfile"
+
+deploy-dokku:
+  steps:
+    - add-to-known_hosts:
+        hostname: $DOKKU_HOST
+    - add-ssh-key:
+        keyname: DOKKU_KEY
+    - script:
+        name: Initialize new repository
+        code: |
+          rm -rf .git
+          git init
+          git config --global user.name "wercker"
+          git config --global user.email "pleasemailus@wercker.com"
+          git remote add dokku dokku@$DOKKU_HOST:$DOKKU_APP
+    - script:
+        name: Add everything to the repository
+        code: |
+          git add .
+          git commit --quiet -m "Result of deploy $WERCKER_GIT_COMMIT"
+    - script:
+        name: Push to dokku
+        code: |
+          git push -f dokku master

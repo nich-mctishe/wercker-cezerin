@@ -1,0 +1,2 @@
+set -e
+export DB_URL="mongodb://$MONGO_PORT_27017_TCP_ADDR:$MONGO_PORT_27017_TCP_PORT/shop"
